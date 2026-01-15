@@ -1,20 +1,16 @@
 {
-  "name": "bot-dc",
-  "version": "1.0.0",
-  "description": "Bot de venda de Robux com sistema completo",
-  "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "server": "node server.js",
+    "webhook": "node webhook.js"
   },
   "dependencies": {
     "airtable": "^0.12.2",
     "discord.js": "^14.25.1",
     "dotenv": "^17.2.3",
-    "express": "^5.2.1",
+    "express": "^4.19.2",
     "mercadopago": "^2.12.0",
-    "node-fetch": "^3.3.2",
-    "sqlite": "^5.1.1",
-    "sqlite3": "^5.1.7"
+    "node-fetch": "^3.3.2"
   }
 }
