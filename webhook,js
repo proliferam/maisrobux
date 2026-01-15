@@ -1,0 +1,26 @@
+import express from "express";
+import { buscarPagamento } from "./mercadopago.js";
+import { atualizarStatus } from "./database.js";
+
+const app = express();
+app.use(express.json());
+
+app.post("/mercadopago/webhook", async (req, res) => {
+  console.log("📩 Webhook recebido:", req.body);
+
+  const pagamentoId = req.body?.data?.id;
+  if (!pagamentoId) return res.sendStatus(200);
+
+  const pagamento = await buscarPagamento(pagamentoId);
+
+  if (pagamento.status === "approved") {
+    await atualizarStatus(pagamentoId, "Pago");
+    console.log("✅ Pagamento aprovado:", pagamentoId);
+  }
+
+  res.sendStatus(200);
+});
+
+app.listen(3000, () => {
+  console.log("🌐 Webhook ativo na porta 3000");
+});
