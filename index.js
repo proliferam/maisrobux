@@ -1,3 +1,4 @@
+
 import "dotenv/config";
 import {
   Client,
@@ -21,11 +22,10 @@ import {
   ThumbnailBuilder,
   TextDisplayBuilder,
   StringSelectMenuBuilder,
+  PermissionFlagsBits,
 } from "discord.js";
-import fetch from "node-fetch";
 import { MercadoPagoConfig, Preference, Payment } from "mercadopago";
 import express from "express";
-
 // ================================================================
 // 💳 MERCADO PAGO CONFIG
 // ================================================================
@@ -36,17 +36,14 @@ const mpConfig = new MercadoPagoConfig({
 const preferenceClient = new Preference(mpConfig);
 const paymentClient = new Payment(mpConfig);
 
-
-
 // ================================================================
 // 🎨 CONFIGURAÇÕES
 // ================================================================
 const UI_THEME = {
-    GREEN: 0x57F287,
     RED: 0xED4245,
     ORANGE: 0xFFA500,
     GRAY: 0x2B2D31,
-    LOGO: "https://cdn.discordapp.com/attachments/1418035623503204474/1460867069372399781/ChatGPT_Image_13_de_jan._de_2026_23_40_20.png?ex=696879fa&is=6967287a&hm=7acd1824bb377377e64f0269c51ea60df3f56aed9313b28e5109fbb7964bee77&",
+    LOGO: "https://cdn.discordapp.com/attachments/1418035623503204474/1460882898751193108/Design_sem_nome_1.png?ex=696888b8&is=69673738&hm=b62a6798b415e8b860cb53927b91eba1018a472f681193ab4e54319ee0ddaec6&",
     BANNER_CART: "https://cdn.discordapp.com/attachments/1418035623503204474/1460867069372399781/ChatGPT_Image_13_de_jan._de_2026_23_40_20.png?ex=696879fa&is=6967287a&hm=7acd1824bb377377e64f0269c51ea60df3f56aed9313b28e5109fbb7964bee77&"
 };
 
@@ -76,37 +73,11 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const ROBLOX_SECURITY = process.env.ROBLOSECURITY;
 let CSRF_TOKEN = null;
 
-const THREAD_AUTO_DELETE_MS = 30 * 60 * 1000;
+const CHANNEL_AUTO_DELETE_MS = 30 * 60 * 1000;
 
 // ================================================================
 // 🔵 FUNÇÕES DE AUTENTICAÇÃO & ROBLOX
 // ================================================================
-async function createMercadoPagoPayment(purchaseData, discordUserId, threadId, purchaseId) {
-  const preference = {
-    items: [
-      {
-        title: `Compra de ${purchaseData.totalRobux} Robux`,
-        quantity: 1,
-        currency_id: "BRL",
-        unit_price: purchaseData.finalPrice
-      }
-    ],
-    external_reference: JSON.stringify({
-      discordUserId,
-      threadId,
-      purchaseId
-    }),
-    notification_url: `${process.env.WEBHOOK_URL}/mercadopago-webhook`,
-    payment_methods: {
-      default_payment_method_id: "pix"
-    }
-  };
-
-  const response = await preferenceClient.create({ body: preference });
-  return response.init_point;
-}
-
-
 async function getCsrfToken() {
   if (CSRF_TOKEN) return CSRF_TOKEN;
   try {
@@ -161,7 +132,6 @@ async function getUserGames(userId) {
   } catch (err) { return []; }
 }
 
-// FUNÇÃO CORRIGIDA - USANDO O MÉTODO DO INDEX (1).js QUE FUNCIONA
 async function getUserGamepasses(userId) {
   try {
     const res = await fetch(`https://apis.roblox.com/game-passes/v1/users/${userId}/game-passes?count=100`);
@@ -183,15 +153,12 @@ async function getGamepassInfo(gamePassId) {
   } catch (err) { return null; }
 }
 
-// FUNÇÃO PARA ENCONTRAR GAMEPASS POR VALOR ESPECÍFICO
 function encontrarGamepassPorValor(gamepasses, valorDesejado) {
   if (!gamepasses || !Array.isArray(gamepasses)) return null;
   
-  // Primeiro, tentar encontrar exatamente o valor
   const exata = gamepasses.find(gp => gp.price === valorDesejado && gp.isForSale === true);
   if (exata) return exata;
   
-  // Se não encontrar exato, tentar encontrar o mais próximo (dentro de um intervalo)
   const valorMin = Math.max(1, valorDesejado - 50);
   const valorMax = valorDesejado + 50;
   
@@ -207,96 +174,146 @@ function encontrarGamepassPorValor(gamepasses, valorDesejado) {
 // ================================================================
 // 🔵 FUNÇÕES AUXILIARES
 // ================================================================
-function scheduleThreadAutoDelete(userId, thread) {
+async function createMercadoPagoPayment(purchaseData, discordUserId, threadId, purchaseId) {
+  const preference = {
+    items: [
+      {
+        title: `Compra de ${purchaseData.totalRobux} Robux`,
+        quantity: 1,
+        currency_id: "BRL",
+        unit_price: purchaseData.finalPrice
+      }
+    ],
+    external_reference: JSON.stringify({
+      discordUserId,
+      threadId,
+      purchaseId
+    }),
+    notification_url: `${process.env.WEBHOOK_URL}/mercadopago-webhook`,
+    payment_methods: {
+      default_payment_method_id: "pix"
+    }
+  };
+
+  const response = await preferenceClient.create({ body: preference });
+  return response.init_point;
+}
+
+function scheduleChannelAutoDelete(userId, channel) {
   const timeout = setTimeout(async () => {
     try {
-      await thread.send("⏰ Esta compra ficou inativa por muito tempo. A thread será encerrada.");
-      await thread.delete().catch(() => {});
+      await channel.send("⏰ Esta compra ficou inativa por muito tempo. O canal será encerrado.");
+      setTimeout(async () => {
+        await channel.delete().catch(() => {});
+      }, 5000);
     } catch (e) {} finally {
       const data = userPurchaseData.get(userId);
       if (data) {
-        if (data.threadDeleteTimeout) clearTimeout(data.threadDeleteTimeout);
+        if (data.channelDeleteTimeout) clearTimeout(data.channelDeleteTimeout);
         userPurchaseData.delete(userId);
       }
     }
-  }, THREAD_AUTO_DELETE_MS);
+  }, CHANNEL_AUTO_DELETE_MS);
   const current = userPurchaseData.get(userId) || {};
-  userPurchaseData.set(userId, { ...current, threadId: thread.id, threadDeleteTimeout: timeout });
+  userPurchaseData.set(userId, { ...current, channelId: channel.id, channelDeleteTimeout: timeout });
 }
 
-function clearThreadAutoDelete(userId) {
+function clearChannelAutoDelete(userId) {
   const data = userPurchaseData.get(userId);
   if (!data) return;
-  if (data.threadDeleteTimeout) { clearTimeout(data.threadDeleteTimeout); data.threadDeleteTimeout = null; }
+  if (data.channelDeleteTimeout) { clearTimeout(data.channelDeleteTimeout); data.channelDeleteTimeout = null; }
   userPurchaseData.set(userId, data);
 }
 
 const formatBRL = (val) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
 
 // ================================================================
-// 🎨 UI BUILDERS (MANTIDOS IGUAIS)
+// 🎨 UI BUILDERS
 // ================================================================
 
 function buildMainPanelComponents() {
-    const statusColor = IS_SHOP_OPEN ? UI_THEME.RED : UI_THEME.RED;
+    const statusColor = IS_SHOP_OPEN ? UI_THEME.yellow : UI_THEME.yellow;
 
-    return [
-      new ContainerBuilder()
+    const mainContainer = new ContainerBuilder()
         .setAccentColor(statusColor)
         .addTextDisplayComponents(
-            new TextDisplayBuilder().setContent("## Painel de compras\n▎ Primeira vez aqui? Veja as [avaliações](https://discord.gg/seu-link)")
-        )
-        .addMediaGalleryComponents(
-            new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(UI_THEME.LOGO))
+            new TextDisplayBuilder().setContent("## Painel de Compras\n▎ Primeira vez aqui? Veja as [avaliações](https://discord.gg/seu-link)")
         )
         .addTextDisplayComponents(
             new TextDisplayBuilder().setContent(
-              "\n**1. Como comprar**\n" +
-              "Acesse o [tutorial](https://discord.com/channels/1418035622568005754/1446323283342659685).\n" +
-              "Faça o seu pedido clicando no botão abaixo.\n\n" +
-              "**2. Informações**\n" +
-              "Dúvidas ou erros, contate o [suporte](https://discord.com/channels/1418035622568005754/1446323399944179762).\n" +
-              "Valores e Limites veja [clicando aqui](https://discord.com/channels/1418035622568005754/1446323238761267333).\n\n"
+                "\n**1. Como comprar**\n" +
+                "Acesse o [tutorial](https://discord.com/channels/1418035622568005754/1446323283342659685).\n" +
+                "Escolha o tipo de compra no menu abaixo.\n\n" +
+                "**2. Informações**\n" +
+                "• Dúvidas ou erros, contate o [suporte](https://discord.com/channels/1418035622568005754/1446323399944179762).\n" +
+                "• Valores e Limites veja [clicando aqui](https://discord.com/channels/1418035622568005754/1446323238761267333)."
             )
-        )
-        .addActionRowComponents(
-          new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setStyle(ButtonStyle.Secondary).setLabel("Criar carrinho")
-             .setEmoji("1460819966826774713")
-             .setCustomId("criar_thread_privada")
-             .setDisabled(!IS_SHOP_OPEN)
-            
-          )
-        )
-    ];
+        );
+
+    const selectMenuRow = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+            .setCustomId("tipo_compra_menu")
+            .setPlaceholder("Escolha o tipo de compra...")
+            .addOptions([
+                {
+                    label: "Comprar Robux",
+                    description: "Compra direta de Robux",
+                    value: "comprar_robux",
+                    emoji: "<:1297019782649872404:1460904157539209321>"
+                },
+                {
+                    label: "Comprar via Gamepass",
+                    description: "Em desenvolvimento",
+                    value: "comprar_gamepass",
+                    emoji: "<:1297270954279567433:1460904184508453026>"
+                }
+            ])
+    );
+
+    return [mainContainer, selectMenuRow];
 }
 
 function buildCartWelcomeContainer(user) {
     return new ContainerBuilder()
-      .setAccentColor(UI_THEME.GREEN)
-      .addTextDisplayComponents(
-          new TextDisplayBuilder().setContent("## Carrinho De Compras\n▎ Compre seus robux aqui!")
-      )
-      .addMediaGalleryComponents(
-          new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(UI_THEME.BANNER_CART))
-      )
-      .addSeparatorComponents(new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Small))
-      .addTextDisplayComponents(
-          new TextDisplayBuilder().setContent(
-              `Olá **${user.username}**, bem-vindo(a) ao seu carrinho de compras.\n` +
-              `Clique em "Continuar" para prosseguir.\n\n` +
-              `⚠️ **O carrinho fechará automaticamente dentro de 30 minutos.**`
-          )
-      )
-      .addSeparatorComponents(new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Small).setDivider(true))
-      .addTextDisplayComponents(new TextDisplayBuilder().setContent(`• **ID:** ${user.id}\n• Guarde esse ID com cuidado!`))
-      .addActionRowComponents(
-          new ActionRowBuilder().addComponents(
-              new ButtonBuilder().setStyle(ButtonStyle.Success).setLabel("Continuar").setCustomId("btn_continuar"),
-              new ButtonBuilder().setStyle(ButtonStyle.Danger).setLabel("Encerrar").setCustomId("btn_cancelar_compra"),
-              new ButtonBuilder().setStyle(ButtonStyle.Secondary).setLabel("Ajuda").setCustomId("btn_ajuda")
-          )
-      );
+        .setAccentColor(UI_THEME.yellow)
+        .addTextDisplayComponents(
+            new TextDisplayBuilder().setContent("## 🛒 Carrinho De Compras\n▎ Compre seus robux aqui!")
+        )
+        .addMediaGalleryComponents(
+            new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(UI_THEME.BANNER_CART))
+        )
+        .addSeparatorComponents(new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Small))
+        .addTextDisplayComponents(
+            new TextDisplayBuilder().setContent(
+                `Olá **${user.username}**, bem-vindo(a) ao seu carrinho de compras.\n` +
+                `Clique em "Continuar" para prosseguir.\n\n` +
+                `⚠️ **O canal será fechado automaticamente dentro de 30 minutos.**`
+            )
+        )
+        .addSeparatorComponents(new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Small).setDivider(true))
+        .addTextDisplayComponents(
+            new TextDisplayBuilder().setContent("**Informações da Conta**")
+        )
+        .addTextDisplayComponents(
+            new TextDisplayBuilder().setContent(`• **ID:** ${user.id}\n• Guarde esse ID com cuidado!`)
+        )
+        .addSeparatorComponents(new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Small).setDivider(true))
+        .addActionRowComponents(
+            new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setStyle(ButtonStyle.Success)
+                    .setLabel("Continuar")
+                    .setCustomId("btn_continuar"),
+                new ButtonBuilder()
+                    .setStyle(ButtonStyle.Danger)
+                    .setLabel("Encerrar")
+                    .setCustomId("btn_cancelar_compra"),
+                new ButtonBuilder()
+                    .setStyle(ButtonStyle.Secondary)
+                    .setLabel("Ajuda")
+                    .setCustomId("btn_ajuda")
+            )
+        );
 }
 
 function buildConfirmUserContainer({ usuarioDigitado, robloxUserId, robloxUsername, avatarURL, gameName, quantidadeRobux }) {
@@ -304,7 +321,7 @@ function buildConfirmUserContainer({ usuarioDigitado, robloxUserId, robloxUserna
     const safeUser = robloxUsername || "Desconhecido";
 
     const container = new ContainerBuilder()
-      .setAccentColor(UI_THEME.GREEN)
+      .setAccentColor(UI_THEME.yellow)
       .addSectionComponents(
         new SectionBuilder()
           .setThumbnailAccessory(new ThumbnailBuilder().setURL(safeAvatar))
@@ -313,7 +330,7 @@ function buildConfirmUserContainer({ usuarioDigitado, robloxUserId, robloxUserna
       .addTextDisplayComponents(
         new TextDisplayBuilder().setContent(`**Usuário digitado:** ${usuarioDigitado}\n**Usuário encontrado:** ${safeUser} (ID: ${robloxUserId})`)
       );
-  
+
     if (gameName) {
         container.addTextDisplayComponents(new TextDisplayBuilder().setContent(`**🎮 Jogo detectado:** ${gameName}`));
     }
@@ -345,7 +362,7 @@ function buildGamepassSelectionContainer({ robloxUsername, robloxUserId, avatarU
     const safeAvatar = avatarURL || UI_THEME.LOGO;
   
     const container = new ContainerBuilder()
-      .setAccentColor(UI_THEME.GREEN)
+      .setAccentColor(UI_THEME.yellow)
       .addSectionComponents(
           new SectionBuilder()
           .setThumbnailAccessory(new ThumbnailBuilder().setURL(safeAvatar))
@@ -364,7 +381,6 @@ function buildGamepassSelectionContainer({ robloxUsername, robloxUserId, avatarU
       .addSeparatorComponents(new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Small).setDivider(true))
       .addTextDisplayComponents(new TextDisplayBuilder().setContent(`Foram encontradas **${qtd} gamepasses**.`));
   
-    // Se o usuário especificou uma quantidade de robux, tentar encontrar automaticamente
     let gamepassAutoSelecionada = null;
     if (quantidadeRobux && gamepassesAVenda && gamepassesAVenda.length > 0) {
         gamepassAutoSelecionada = encontrarGamepassPorValor(gamepassesAVenda, parseInt(quantidadeRobux));
@@ -390,7 +406,6 @@ function buildGamepassSelectionContainer({ robloxUsername, robloxUserId, avatarU
     const rowButtons = new ActionRowBuilder();
     rowButtons.addComponents(new ButtonBuilder().setStyle(ButtonStyle.Primary).setLabel("Atualizar").setCustomId("confirmar_usuario_sim"));
     
-    // Se encontrou gamepass automaticamente, mudar o botão para "Usar Gamepass Encontrada"
     if (gamepassAutoSelecionada && !fallbackManual) {
         rowButtons.addComponents(new ButtonBuilder().setStyle(ButtonStyle.Success).setLabel("Usar Gamepass Encontrada").setCustomId("usar_gamepass_automatica"));
     } else if (select && !fallbackManual) {
@@ -420,7 +435,7 @@ function buildFinalSummaryContainer({ robloxUsername, robloxUserId, avatarURL, s
     });
     const valorReais = totalReceber * ECONOMY.PRICE_PER_ROBUX;
 
-    return new ContainerBuilder().setAccentColor(UI_THEME.GREEN)
+    return new ContainerBuilder().setAccentColor(UI_THEME.yellow)
       .addSectionComponents(new SectionBuilder().setThumbnailAccessory(new ThumbnailBuilder().setURL(safeAvatar)).addTextDisplayComponents(new TextDisplayBuilder().setContent(`## Detalhes finais\nUsuário: **${robloxUsername}**`)))
       .addActionRowComponents(
         new ActionRowBuilder().addComponents(
@@ -432,13 +447,12 @@ function buildFinalSummaryContainer({ robloxUsername, robloxUserId, avatarURL, s
       .addSeparatorComponents(new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Small).setDivider(true))
       .addTextDisplayComponents(new TextDisplayBuilder().setContent(`💰 **Total em Robux:** ${totalPriceRobux}\n💵 **Valor a Pagar:** ${formatBRL(valorReais)}`))
       .addTextDisplayComponents(new TextDisplayBuilder().setContent("✅ **Pronto!** Aguarde o atendimento."))
-      .addActionRowComponents(new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Secondary).setLabel("⬅ Voltar").setCustomId("voltar_para_selecao_gamepasses"), new ButtonBuilder().setStyle(ButtonStyle.Danger).setLabel("Cancelar").setCustomId("btn_cancelar_compra"), new ButtonBuilder().setStyle(ButtonStyle.Success).setLabel("💠 Pagar com PIX").setCustomId("pagar_pix")));
-}
-
+      .addActionRowComponents(new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Secondary).setLabel("⬅ Voltar").setCustomId("voltar_para_selecao_gamepasses"), new ButtonBuilder().setStyle(ButtonStyle.Danger).setLabel("Cancelar").setCustomId("btn_cancelar_compra"), new ButtonBuilder().setStyle(ButtonStyle.Success).setLabel("💠 Pagar com PIX").setCustomId("pagar_pix"), ""));
+    }
 function buildManualGamepassContainer({ robloxUsername, avatarURL, gamepass }) {
     const safeAvatar = avatarURL || UI_THEME.LOGO;
     const receber = Math.floor((gamepass.priceInRobux || 0) * 0.7);
-    return new ContainerBuilder().setAccentColor(UI_THEME.GREEN)
+    return new ContainerBuilder().setAccentColor(UI_THEME.yellow)
       .addSectionComponents(new SectionBuilder().setThumbnailAccessory(new ThumbnailBuilder().setURL(safeAvatar)).addTextDisplayComponents(new TextDisplayBuilder().setContent(`## Gamepass Manual\n**Usuário:** ${robloxUsername}`)))
       .addTextDisplayComponents(new TextDisplayBuilder().setContent(`**Nome:** ${gamepass.name}\n**ID:** ${gamepass.id}\n**Preço:** ${gamepass.priceInRobux}\n**Receber:** ${receber}`))
       .addTextDisplayComponents(new TextDisplayBuilder().setContent(`🔗 [Abrir no Roblox](https://www.roblox.com/game-pass/${gamepass.id}/-)`))
@@ -454,7 +468,7 @@ function buildGamepassMismatchContainer({ robloxUsername, avatarURL, gamepass, c
 }
 
 function buildCancelConfirmContainer() {
-  return new ContainerBuilder().setAccentColor(UI_THEME.RED).addTextDisplayComponents(new TextDisplayBuilder().setContent("## Cancelar Compra?\n⚠️ **Tem certeza?** A thread será encerrada."))
+  return new ContainerBuilder().setAccentColor(UI_THEME.YELLOW).addTextDisplayComponents(new TextDisplayBuilder().setContent("## Cancelar Compra?\n⚠️ **Tem certeza?** O canal será encerrado."))
     .addActionRowComponents(new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Danger).setLabel("Sim, cancelar").setCustomId("btn_cancelar_confirmado"), new ButtonBuilder().setStyle(ButtonStyle.Secondary).setLabel("Não, voltar").setCustomId("btn_cancelar_voltar")));
 }
 
@@ -463,12 +477,12 @@ function buildCanceledContainer() {
 }
 
 function buildErrorContainer(msg) {
-    return new ContainerBuilder().setAccentColor(UI_THEME.RED).addTextDisplayComponents(new TextDisplayBuilder().setContent(`## ❌ Erro\n${msg}`))
+    return new ContainerBuilder().setAccentColor(UI_THEME.YELLOW).addTextDisplayComponents(new TextDisplayBuilder().setContent(`## ❌ Erro\n${msg}`))
       .addActionRowComponents(new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Primary).setLabel("Tentar Novamente").setCustomId("btn_continuar")));
 }
 
 // ================================================================
-// 🔵 CLIENTE DISCORD (MANTIDO IGUAL)
+// 🔵 CLIENTE DISCORD
 // ================================================================
 client.once(Events.ClientReady, async () => {
   console.log(`Logado como ${client.user.tag}`);
@@ -484,13 +498,17 @@ client.once(Events.ClientReady, async () => {
   } catch (error) { console.error("Erro ao registrar comandos:", error); }
 });
 
-// SLASH COMMANDS (MANTIDO IGUAL)
+// SLASH COMMANDS
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
   if (interaction.commandName === "sendcomponents") {
       const components = buildMainPanelComponents();
-      const reply = await interaction.reply({ flags: MessageFlags.IsComponentsV2, components, fetchReply: true });
+      const reply = await interaction.reply({ 
+          components, 
+          flags: MessageFlags.IsComponentsV2, 
+          fetchReply: true 
+      });
       MAIN_PANEL_DATA = { channelId: reply.channelId, messageId: reply.id };
       console.log(`Painel registrado em Canal: ${reply.channelId}, Msg: ${reply.id}`);
   }
@@ -502,7 +520,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
           try {
               const channel = await client.channels.fetch(MAIN_PANEL_DATA.channelId);
               const message = await channel.messages.fetch(MAIN_PANEL_DATA.messageId);
-              await message.edit({ components: buildMainPanelComponents() });
+              const updatedComponents = buildMainPanelComponents();
+              await message.edit({ components: updatedComponents });
               await interaction.reply({ content: "✅ Loja aberta e painel atualizado.", flags: MessageFlags.Ephemeral });
           } catch (e) {
               console.error("Erro ao atualizar:", e);
@@ -520,7 +539,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
           try {
               const channel = await client.channels.fetch(MAIN_PANEL_DATA.channelId);
               const message = await channel.messages.fetch(MAIN_PANEL_DATA.messageId);
-              await message.edit({ components: buildMainPanelComponents() });
+              const updatedComponents = buildMainPanelComponents();
+              await message.edit({ components: updatedComponents });
               await interaction.reply({ content: "⛔ Loja fechada e painel atualizado.", flags: MessageFlags.Ephemeral });
           } catch (e) {
               console.error("Erro ao atualizar:", e);
@@ -532,11 +552,115 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-// INTERAÇÕES DE BOTÃO (MANTIDO IGUAL COM ADIÇÃO DO NOVO BOTÃO)
+// INTERAÇÕES DE MENU DE SELEÇÃO
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isStringSelectMenu()) return;
+  
+  if (interaction.customId === "tipo_compra_menu") {
+    await interaction.deferUpdate();
+    
+    const selectedValue = interaction.values[0];
+    
+    if (selectedValue === "comprar_robux") {
+      if (!IS_SHOP_OPEN) {
+        await interaction.followUp({ content: "⛔ **A loja está fechada no momento.**", flags: MessageFlags.Ephemeral });
+        return;
+      }
+      
+      try {
+        const parentChannel = interaction.channel.parent;
+        const channel = await interaction.guild.channels.create({
+          name: `🛒-compra-${interaction.user.username}`,
+          type: ChannelType.GuildText,
+          parent: parentChannel ? parentChannel.id : null,
+          permissionOverwrites: [
+            {
+              id: interaction.guild.id,
+              deny: [PermissionFlagsBits.ViewChannel]
+            },
+            {
+              id: interaction.user.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+            }
+          ]
+        });
+        
+        await channel.send(`Olá <@${interaction.user.id}>!`);
+        
+        const container = buildCartWelcomeContainer(interaction.user);
+        const msg = await channel.send({ 
+          flags: MessageFlags.IsComponentsV2, 
+          components: [container] 
+        });
+        
+        const current = userPurchaseData.get(interaction.user.id) || {};
+        userPurchaseData.set(interaction.user.id, { 
+          ...current, 
+          lastMessageId: msg.id, 
+          lastChannelId: msg.channel.id, 
+          channelId: channel.id,
+          purchaseType: "robux"
+        });
+        
+        scheduleChannelAutoDelete(interaction.user.id, channel);
+        
+        await interaction.followUp({ 
+          content: `✅ Criei seu canal para compra de Robux: ${channel.toString()}`, 
+          flags: MessageFlags.Ephemeral 
+        });
+        
+      } catch (e) {
+        console.error("Erro criar canal:", e);
+        await interaction.followUp({ 
+          content: "❌ Erro ao criar canal. Tente novamente.", 
+          flags: MessageFlags.Ephemeral 
+        });
+      }
+    } 
+    else if (selectedValue === "comprar_gamepass") {
+      const devContainer = new ContainerBuilder()
+        .setAccentColor(UI_THEME.ORANGE)
+        .addTextDisplayComponents(
+            new TextDisplayBuilder().setContent("## 🎮 Em Desenvolvimento")
+        )
+        .addTextDisplayComponents(
+            new TextDisplayBuilder().setContent(
+                "**Compra via Gamepass está em desenvolvimento!**\n\n" +
+                "Esta funcionalidade será implementada em breve. Por enquanto, use a opção de compra direta de Robux."
+            )
+        )
+        .addMediaGalleryComponents(
+            new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(UI_THEME.LOGO))
+        );
+      
+      await interaction.followUp({ 
+        flags: MessageFlags.IsComponentsV2,
+        components: [devContainer],
+        ephemeral: true 
+      });
+    }
+    return;
+  }
+  
+  if (interaction.customId === "selecionar_gamepass") {
+    const data = userPurchaseData.get(interaction.user.id);
+    if (!data) return interaction.reply({ content: "Erro.", flags: MessageFlags.Ephemeral });
+    const selecionadas = [];
+    for (const value of interaction.values) {
+      const found = data.gamepassesAVenda.find((gp) => String(gp.gamePassId) === String(value));
+      if (found) selecionadas.push(found);
+    }
+    data.selectedGamepasses = selecionadas;
+    userPurchaseData.set(interaction.user.id, data);
+    await interaction.deferUpdate();
+  }
+});
+
+// INTERAÇÕES DE BOTÃO
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isButton()) return;
 
- if (interaction.customId === "pagar_pix") {
+  if (interaction.customId === "pagar_pix") {
   await interaction.deferUpdate();
 
   const data = userPurchaseData.get(interaction.user.id);
@@ -578,18 +702,45 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!IS_SHOP_OPEN) return interaction.reply({ content: "⛔ **A loja está fechada no momento.**", flags: MessageFlags.Ephemeral });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
-        const thread = await interaction.channel.threads.create({ name: `🛒 Compra - ${interaction.user.username}`, type: ChannelType.PrivateThread, invitable: false });
-        await thread.members.add(interaction.user.id);
-        await thread.send(`Olá <@${interaction.user.id}>!`);
+        const parentChannel = interaction.channel.parent;
+        const channel = await interaction.guild.channels.create({
+          name: `🛒-compra-${interaction.user.username}`,
+          type: ChannelType.GuildText,
+          parent: parentChannel ? parentChannel.id : null,
+          permissionOverwrites: [
+            {
+              id: interaction.guild.id,
+              deny: [PermissionFlagsBits.ViewChannel]
+            },
+            {
+              id: interaction.user.id,
+              allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory]
+            }
+          ]
+        });
+        
+        await channel.send(`Olá <@${interaction.user.id}>!`);
+        
         const container = buildCartWelcomeContainer(interaction.user);
-        const msg = await thread.send({ flags: MessageFlags.IsComponentsV2, components: [ container ] });
+        const msg = await channel.send({ 
+          flags: MessageFlags.IsComponentsV2, 
+          components: [container] 
+        });
+        
         const current = userPurchaseData.get(interaction.user.id) || {};
-        userPurchaseData.set(interaction.user.id, { ...current, lastMessageId: msg.id, lastChannelId: msg.channel.id, threadId: thread.id });
-        scheduleThreadAutoDelete(interaction.user.id, thread);
-        await interaction.editReply({ content: `✅ Criei sua thread: ${thread.toString()}` });
+        userPurchaseData.set(interaction.user.id, { 
+          ...current, 
+          lastMessageId: msg.id, 
+          lastChannelId: msg.channel.id, 
+          channelId: channel.id, 
+          purchaseType: "robux" 
+        });
+        
+        scheduleChannelAutoDelete(interaction.user.id, channel);
+        await interaction.editReply({ content: `✅ Criei seu canal: ${channel.toString()}` });
     } catch (e) {
-        console.error("Erro criar thread:", e);
-        await interaction.editReply({ content: "Erro ao criar thread." });
+        console.error("Erro criar canal:", e);
+        await interaction.editReply({ content: "Erro ao criar canal." });
     }
     return;
   }
@@ -599,11 +750,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
   if (interaction.customId === "btn_voltar_inicio") {
       const data = userPurchaseData.get(interaction.user.id);
       if(!data) return interaction.reply({content: "Erro de sessão.", flags: MessageFlags.Ephemeral});
+      
       const container = buildCartWelcomeContainer(interaction.user);
       try {
         const ch = await client.channels.fetch(data.lastChannelId);
         const msg = await ch.messages.fetch(data.lastMessageId);
-        await msg.edit({ flags: MessageFlags.IsComponentsV2, components: [container] });
+        await msg.edit({ 
+          flags: MessageFlags.IsComponentsV2, 
+          components: [container] 
+        });
         await interaction.deferUpdate();
       } catch(e) {}
       return;
@@ -643,7 +798,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return;
   }
 
-  // NOVO BOTÃO: USAR GAMEPASS AUTOMÁTICA
   if (interaction.customId === "usar_gamepass_automatica") {
     await interaction.deferUpdate();
     const data = userPurchaseData.get(interaction.user.id);
@@ -651,18 +805,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
     
     const { robloxUserId, avatarURL, robloxUsername, lastMessageId, lastChannelId, quantidadeRobux } = data;
     
-    // Buscar gamepasses novamente
     const gamepasses = await getUserGamepasses(robloxUserId);
     let gamepassesAVenda = [];
     if (gamepasses && gamepasses.length > 0) {
       gamepassesAVenda = gamepasses.filter((gp) => gp.isForSale === true);
     }
     
-    // Encontrar gamepass pelo valor desejado
     const gamepassEncontrada = encontrarGamepassPorValor(gamepassesAVenda, parseInt(quantidadeRobux));
     
     if (!gamepassEncontrada) {
-      // Se não encontrou, mostrar erro
       const errorContainer = buildErrorContainer(`Não foi encontrada uma gamepass de ${quantidadeRobux} Robux à venda.`);
       try {
         const channel = await client.channels.fetch(lastChannelId);
@@ -672,11 +823,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
     
-    // Se encontrou, prosseguir com essa gamepass
     data.selectedGamepasses = [gamepassEncontrada];
     userPurchaseData.set(interaction.user.id, data);
     
-    // Ir direto para o resumo final
     const container = buildFinalSummaryContainer({ 
       robloxUsername: data.robloxUsername, 
       robloxUserId: data.robloxUserId, 
@@ -747,11 +896,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
        const message = await channel.messages.fetch(data.lastMessageId);
        await message.edit({ flags: MessageFlags.IsComponentsV2, components: [container] });
        await interaction.deferUpdate();
-       clearThreadAutoDelete(interaction.user.id);
-       if(data.threadId) {
+       clearChannelAutoDelete(interaction.user.id);
+       if(data.channelId) {
           setTimeout(async () => {
-             const t = await client.channels.fetch(data.threadId).catch(()=>null);
-             if(t) t.delete().catch(()=>null);
+             const c = await client.channels.fetch(data.channelId).catch(()=>null);
+             if(c) c.delete().catch(()=>null);
           }, 5000);
        }
        userPurchaseData.delete(interaction.user.id);
@@ -795,7 +944,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-// MODIFICADO: AGORA O MODAL PERGUNTA QUANTOS ROBUX O USUÁRIO QUER
+// MODAL PARA COMPRA
 async function openPurchaseForm(interaction) {
   const modal = new ModalBuilder().setCustomId("modal_compra").setTitle("Informações da compra");
   
@@ -821,7 +970,7 @@ async function openPurchaseForm(interaction) {
   await interaction.showModal(modal);
 }
 
-// SUBMIT MODAL - USUÁRIO (MODIFICADO PARA LER A QUANTIDADE DE ROBUX)
+// SUBMIT MODAL
 client.on(Events.InteractionCreate, async (interaction) => {
   if (interaction.isModalSubmit() && interaction.customId === "modal_compra") {
     await interaction.deferUpdate();
@@ -836,7 +985,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
     };
 
-    // Validar quantidade de robux
     const qtdRobuxNum = parseInt(quantidadeRobux);
     if (isNaN(qtdRobuxNum) || qtdRobuxNum < 1) {
       await sendError("Por favor, insira uma quantidade válida de Robux (número maior que 0).");
@@ -864,7 +1012,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       selectedGamepasses: [], 
       lastChannelId: saved.lastChannelId, 
       lastMessageId: saved.lastMessageId, 
-      threadId: saved.threadId 
+      channelId: saved.channelId 
     };
     userPurchaseData.set(interaction.user.id, newData);
 
@@ -922,48 +1070,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           await msg.edit({ flags: MessageFlags.IsComponentsV2, components: [container] });
       } catch(e) {}
   }
-});
-
-client.on(Events.InteractionCreate, async (interaction) => {
-  if (!interaction.isStringSelectMenu()) return;
-  if (interaction.customId !== "selecionar_gamepass") return;
-  const data = userPurchaseData.get(interaction.user.id);
-  if (!data) return interaction.reply({ content: "Erro.", flags: MessageFlags.Ephemeral });
-  const selecionadas = [];
-  for (const value of interaction.values) {
-    const found = data.gamepassesAVenda.find((gp) => String(gp.gamePassId) === String(value));
-    if (found) selecionadas.push(found);
-  }
-  data.selectedGamepasses = selecionadas;
-  userPurchaseData.set(interaction.user.id, data);
-  await interaction.deferUpdate();
-});
-const app = express();
-app.use(express.json());
-
-app.post("/mercadopago-webhook", async (req, res) => {
-  try {
-    const paymentId = req.body?.data?.id;
-    if (!paymentId) return res.sendStatus(200);
-
-    const payment = await paymentClient.get({ id: paymentId });
-
-    if (payment.status === "approved") {
-      const ref = JSON.parse(payment.external_reference || "{}");
-
-      console.log("✅ PAGAMENTO APROVADO:", ref);
-      // aqui depois você entrega robux automaticamente
-    }
-
-    res.sendStatus(200);
-  } catch (err) {
-    console.error("Webhook erro:", err);
-    res.sendStatus(500);
-  }
-});
-
-app.listen(3000, () => {
-  console.log("🌐 Webhook Mercado Pago rodando na porta 3000");
 });
 
 client.login(TOKEN);
