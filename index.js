@@ -41,6 +41,7 @@ const paymentClient = new Payment(mpConfig);
 // ================================================================
 const UI_THEME = {
     RED: 0xED4245,
+    YELLOW: 0xFEE75C,
     ORANGE: 0xFFA500,
     GRAY: 0x2B2D31,
     LOGO: "https://cdn.discordapp.com/attachments/1418035623503204474/1460882898751193108/Design_sem_nome_1.png?ex=696888b8&is=69673738&hm=b62a6798b415e8b860cb53927b91eba1018a472f681193ab4e54319ee0ddaec6&",
@@ -447,7 +448,7 @@ function buildFinalSummaryContainer({ robloxUsername, robloxUserId, avatarURL, s
       .addSeparatorComponents(new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Small).setDivider(true))
       .addTextDisplayComponents(new TextDisplayBuilder().setContent(`💰 **Total em Robux:** ${totalPriceRobux}\n💵 **Valor a Pagar:** ${formatBRL(valorReais)}`))
       .addTextDisplayComponents(new TextDisplayBuilder().setContent("✅ **Pronto!** Aguarde o atendimento."))
-      .addActionRowComponents(new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Secondary).setLabel("⬅ Voltar").setCustomId("voltar_para_selecao_gamepasses"), new ButtonBuilder().setStyle(ButtonStyle.Danger).setLabel("Cancelar").setCustomId("btn_cancelar_compra"), new ButtonBuilder().setStyle(ButtonStyle.Success).setLabel("💠 Pagar com PIX").setCustomId("pagar_pix"), ""));
+      .addActionRowComponents(new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Secondary).setLabel("⬅ Voltar").setCustomId("voltar_para_selecao_gamepasses"), new ButtonBuilder().setStyle(ButtonStyle.Danger).setLabel("Cancelar").setCustomId("btn_cancelar_compra"), new ButtonBuilder().setStyle(ButtonStyle.Success).setLabel("💠 Pagar com PIX").setCustomId("pagar_pix"),));
     }
 function buildManualGamepassContainer({ robloxUsername, avatarURL, gamepass }) {
     const safeAvatar = avatarURL || UI_THEME.LOGO;
