@@ -3,6 +3,7 @@ import { buscarPagamento } from "./mercadopago.js";
 import { atualizarStatus, buscarPedidoPorPagamentoId, atualizarEstatisticasAfiliado } from "./database.js";
 import { Client, GatewayIntentBits, EmbedBuilder, Colors } from "discord.js";
 
+
 const app = express();
 app.use(express.json());
 
