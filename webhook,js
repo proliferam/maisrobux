@@ -1,49 +1,221 @@
 import express from "express";
-import cors from "cors";
-import { criarPagamento, buscarPagamento } from "./mercadopago.js";
-import { criarPedido, atualizarStatus } from "./database.js";
+import { buscarPagamento } from "./mercadopago.js";
+import { atualizarStatus, buscarPedidoPorPagamentoId, atualizarEstatisticasAfiliado } from "./database.js";
+import { Client, GatewayIntentBits, EmbedBuilder, Colors } from "discord.js";
 
 const app = express();
-
-app.use(cors());
 app.use(express.json());
 
-/* ================== CRIAR PAGAMENTO ================== */
-app.post("/criar-pagamento", async (req, res) => {
-  const { valor, descricao } = req.body;
-
-  const pagamento = await criarPagamento(valor, descricao);
-
-  await criarPedido({
-    pagamentoId: pagamento.id,
-    valor,
-    status: "Pendente"
-  });
-
-  res.json(pagamento);
+// Inicializar cliente Discord para enviar mensagens
+const discordClient = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages]
 });
 
-/* ================== WEBHOOK MERCADO PAGO ================== */
-app.post("/webhook", async (req, res) => {
+// Conectar ao Discord (apenas para envio de mensagens)
+discordClient.login(process.env.DISCORD_TOKEN).catch(console.error);
+
+discordClient.once('ready', () => {
+  console.log('🤖 Bot de webhook conectado ao Discord');
+});
+
+// ================================================================
+// 🌐 WEBHOOK MERCADO PAGO
+// ================================================================
+app.post("/mercadopago-webhook", async (req, res) => {
+  console.log("📩 Webhook recebido:", req.body);
+
   try {
-    const pagamentoId = req.body?.data?.id;
-    if (!pagamentoId) return res.sendStatus(200);
+    const { type, data } = req.body;
+    
+    if (type === "payment") {
+      const pagamentoId = data.id;
+      if (!pagamentoId) return res.sendStatus(200);
 
-    const pagamento = await buscarPagamento(pagamentoId);
+      // Buscar detalhes do pagamento
+      const pagamento = await buscarPagamento(pagamentoId);
+      
+      if (!pagamento) {
+        console.log("❌ Pagamento não encontrado:", pagamentoId);
+        return res.sendStatus(200);
+      }
 
-    if (pagamento.status === "approved") {
-      await atualizarStatus(pagamentoId, "Pago");
+      // Buscar pedido no banco de dados
+      const pedido = await buscarPedidoPorPagamentoId(pagamentoId);
+      
+      if (!pedido) {
+        console.log("❌ Pedido não encontrado para pagamento:", pagamentoId);
+        return res.sendStatus(200);
+      }
+
+      const pedidoData = pedido.fields;
+      
+      // Atualizar status conforme o status do pagamento
+      let novoStatus = "Pendente";
+      if (pagamento.status === "approved") {
+        novoStatus = "Pago";
+      } else if (pagamento.status === "cancelled") {
+        novoStatus = "Cancelado";
+      } else if (pagamento.status === "refunded") {
+        novoStatus = "Reembolsado";
+      }
+      
+      await atualizarStatus(pagamentoId, novoStatus);
+
+      // Enviar para canais do Discord
+      if (discordClient.isReady()) {
+        const channelPendentes = await discordClient.channels.fetch(process.env.CHANNEL_PENDENTES).catch(() => null);
+        const channelPagos = await discordClient.channels.fetch(process.env.CHANNEL_PAGOS).catch(() => null);
+        const channelEntregues = await discordClient.channels.fetch(process.env.CHANNEL_ENTREGUES).catch(() => null);
+
+        if (pagamento.status === "approved") {
+          console.log("✅ Pagamento aprovado:", pagamentoId);
+          
+          // Enviar para canal de pagos
+          if (channelPagos) {
+            const embed = new EmbedBuilder()
+              .setTitle("✅ PAGAMENTO APROVADO")
+              .setColor(Colors.Green)
+              .addFields(
+                { name: "📋 ID do Pedido", value: pagamentoId, inline: true },
+                { name: "👤 Cliente", value: pedidoData.RobloxUser || "Não informado", inline: true },
+                { name: "💰 Valor", value: `R$ ${pedidoData.Valor}`, inline: true },
+                { name: "🎮 Robux", value: pedidoData.Robux?.toString() || "0", inline: true },
+                { name: "📅 Data", value: new Date().toLocaleString("pt-BR"), inline: true },
+                { name: "🎫 Cupom", value: pedidoData.Cupom || "Nenhum", inline: true },
+                { name: "🤝 Afiliado", value: pedidoData.Afiliado || "Nenhum", inline: true }
+              )
+              .setTimestamp();
+
+            await channelPagos.send({ embeds: [embed] });
+          }
+
+          // Atualizar estatísticas do afiliado
+          if (pedidoData.AfiliadoId && pedidoData.Valor) {
+            await atualizarEstatisticasAfiliado(pedidoData.AfiliadoId, pedidoData.Valor);
+          }
+
+          // Enviar mensagem para o cliente
+          if (pedidoData.DiscordId) {
+            try {
+              const user = await discordClient.users.fetch(pedidoData.DiscordId);
+              if (user) {
+                await user.send({
+                  embeds: [{
+                    title: "✅ Pagamento Aprovado!",
+                    description: `Seu pagamento de **R$ ${pedidoData.Valor}** foi aprovado!\n\n` +
+                                 `**Detalhes do Pedido:**\n` +
+                                 `• Robux: ${pedidoData.Robux}\n` +
+                                 `• ID do Pedido: ${pagamentoId}\n` +
+                                 `• Data: ${new Date().toLocaleString('pt-BR')}\n\n` +
+                                 `Aguarde a entrega dos Robux!`,
+                    color: Colors.Green,
+                    timestamp: new Date()
+                  }]
+                });
+              }
+            } catch (error) {
+              console.log("❌ Não foi possível enviar DM para o usuário:", error);
+            }
+          }
+
+        } else if (pagamento.status === "pending" || pagamento.status === "in_process") {
+          // Enviar para canal de pendentes
+          if (channelPendentes) {
+            const embed = new EmbedBuilder()
+              .setTitle("⏳ PAGAMENTO PENDENTE")
+              .setColor(Colors.Yellow)
+              .addFields(
+                { name: "📋 ID do Pedido", value: pagamentoId, inline: true },
+                { name: "👤 Cliente", value: pedidoData.RobloxUser || "Não informado", inline: true },
+                { name: "💰 Valor", value: `R$ ${pedidoData.Valor}`, inline: true },
+                { name: "🎮 Robux", value: pedidoData.Robux?.toString() || "0", inline: true },
+                { name: "📅 Data", value: new Date().toLocaleString("pt-BR"), inline: true },
+                { name: "🎫 Cupom", value: pedidoData.Cupom || "Nenhum", inline: true }
+              )
+              .setTimestamp();
+
+            await channelPendentes.send({ embeds: [embed] });
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error("❌ Erro ao processar webhook:", error);
+  }
+
+  res.sendStatus(200);
+});
+
+// ================================================================
+// 🔄 WEBHOOK PARA MARCAR COMO ENTREGUE
+// ================================================================
+app.post("/marcar-entregue", async (req, res) => {
+  try {
+    const { pagamentoId } = req.body;
+    
+    if (!pagamentoId) {
+      return res.status(400).json({ error: "ID do pagamento é obrigatório" });
     }
 
-    res.sendStatus(200);
-  } catch (err) {
-    console.error("Erro no webhook:", err);
-    res.sendStatus(500);
+    // Atualizar status para entregue
+    await atualizarStatus(pagamentoId, "Entregue");
+
+    // Mover para canal de entregues
+    if (discordClient.isReady()) {
+      const channelEntregues = await discordClient.channels.fetch(process.env.CHANNEL_ENTREGUES).catch(() => null);
+      
+      if (channelEntregues) {
+        const pedido = await buscarPedidoPorPagamentoId(pagamentoId);
+        
+        if (pedido) {
+          const embed = new EmbedBuilder()
+            .setTitle("🎁 PEDIDO ENTREGUE")
+            .setColor(Colors.Green)
+            .addFields(
+              { name: "📋 ID do Pedido", value: pagamentoId, inline: true },
+              { name: "👤 Cliente", value: pedido.fields.RobloxUser || "Não informado", inline: true },
+              { name: "💰 Valor", value: `R$ ${pedido.fields.Valor}`, inline: true },
+              { name: "🎮 Robux", value: pedido.fields.Robux?.toString() || "0", inline: true },
+              { name: "📅 Data de Entrega", value: new Date().toLocaleString("pt-BR"), inline: true },
+              { name: "🤝 Afiliado", value: pedido.fields.Afiliado || "Nenhum", inline: true }
+            )
+            .setTimestamp();
+
+          await channelEntregues.send({ embeds: [embed] });
+        }
+      }
+    }
+
+    res.json({ success: true, message: "Pedido marcado como entregue" });
+  } catch (error) {
+    console.error("❌ Erro ao marcar como entregue:", error);
+    res.status(500).json({ error: "Erro interno do servidor" });
   }
 });
 
-/* ================== START ================== */
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log("🚀 API + Webhook rodando");
+// ================================================================
+// 📊 ENDPOINTS PARA DASHBOARD
+// ================================================================
+app.get("/estatisticas", async (req, res) => {
+  try {
+    const estatisticas = await obterEstatisticas();
+    res.json(estatisticas);
+  } catch (error) {
+    console.error("Erro ao buscar estatísticas:", error);
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+app.get("/afiliados", async (req, res) => {
+  try {
+    const afiliados = await listarAfiliados();
+    res.json(afiliados);
+  } catch (error) {
+    console.error("Erro ao buscar afiliados:", error);
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+app.listen(3000, () => {
+  console.log("🌐 Webhook ativo na porta 3000");
 });
