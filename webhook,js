@@ -1,26 +1,49 @@
 import express from "express";
-import { buscarPagamento } from "./mercadopago.js";
-import { atualizarStatus } from "./database.js";
+import cors from "cors";
+import { criarPagamento, buscarPagamento } from "./mercadopago.js";
+import { criarPedido, atualizarStatus } from "./database.js";
 
 const app = express();
+
+app.use(cors());
 app.use(express.json());
 
-app.post("/mercadopago/webhook", async (req, res) => {
-  console.log("📩 Webhook recebido:", req.body);
+/* ================== CRIAR PAGAMENTO ================== */
+app.post("/criar-pagamento", async (req, res) => {
+  const { valor, descricao } = req.body;
 
-  const pagamentoId = req.body?.data?.id;
-  if (!pagamentoId) return res.sendStatus(200);
+  const pagamento = await criarPagamento(valor, descricao);
 
-  const pagamento = await buscarPagamento(pagamentoId);
+  await criarPedido({
+    pagamentoId: pagamento.id,
+    valor,
+    status: "Pendente"
+  });
 
-  if (pagamento.status === "approved") {
-    await atualizarStatus(pagamentoId, "Pago");
-    console.log("✅ Pagamento aprovado:", pagamentoId);
-  }
-
-  res.sendStatus(200);
+  res.json(pagamento);
 });
 
-app.listen(3000, () => {
-  console.log("🌐 Webhook ativo na porta 3000");
+/* ================== WEBHOOK MERCADO PAGO ================== */
+app.post("/webhook", async (req, res) => {
+  try {
+    const pagamentoId = req.body?.data?.id;
+    if (!pagamentoId) return res.sendStatus(200);
+
+    const pagamento = await buscarPagamento(pagamentoId);
+
+    if (pagamento.status === "approved") {
+      await atualizarStatus(pagamentoId, "Pago");
+    }
+
+    res.sendStatus(200);
+  } catch (err) {
+    console.error("Erro no webhook:", err);
+    res.sendStatus(500);
+  }
+});
+
+/* ================== START ================== */
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log("🚀 API + Webhook rodando");
 });
