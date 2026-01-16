@@ -1,7 +1,7 @@
 {
   "type": "module",
   "scripts": {
-    "start": "node index..js",
+    "start": "node index.js",
     "server": "node server.js",
     "webhook": "node webhook.js"
   },
